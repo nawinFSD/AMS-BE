@@ -5,7 +5,7 @@ from app.routers import (
     auth_router, attendance_router, analytics_router, 
     users_router, ai_router, ws_router, predictions_router,
     departments_router, courses_router, subjects_router, 
-    students_router, faculty_router
+    students_router, faculty_router, notifications_router
 )
 
 # Create database tables if they do not exist
@@ -51,6 +51,7 @@ app.include_router(analytics_router.router)
 app.include_router(predictions_router.router)
 app.include_router(users_router.router)
 app.include_router(ai_router.router)
+app.include_router(notifications_router.router)
 app.include_router(ws_router.router)
 
 @app.get("/")

@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 from datetime import datetime
 from app.database.connection import get_db
-from app.models.domain import Attendance, Student, Subject, User, Faculty, UserRole, Notification
+from app.models.domain import Attendance, AttendanceLog, Student, Subject, User, Faculty, UserRole, Notification
 from app.schemas.schemas import AttendanceMark, AttendanceResponse
 from app.middleware.auth import get_current_user, require_role
 from app.routers.ws_router import ws_manager
@@ -38,7 +38,8 @@ async def mark_attendance(
     if existing:
         existing.status = data.status
         existing.type = data.type or "MANUAL"
-        existing.timestamp = datetime.utcnow()
+        existing.marked_by_faculty_id = faculty_id
+        existing.updatedAt = datetime.utcnow()
         attendance_record = existing
     else:
         attendance_record = Attendance(
@@ -47,11 +48,17 @@ async def mark_attendance(
             date=data.date,
             status=data.status,
             type=data.type or "MANUAL",
-            marked_by_faculty_id=faculty_id,
-            timestamp=datetime.utcnow()
+            marked_by_faculty_id=faculty_id
         )
         db.add(attendance_record)
 
+    db.flush()
+    log = AttendanceLog(
+        attendance_id=attendance_record.id,
+        action="MARKED" if not existing else "UPDATED",
+        details=f"{data.status} by {current_user.name}"
+    )
+    db.add(log)
     db.commit()
     db.refresh(attendance_record)
 
@@ -100,4 +107,4 @@ def get_attendance_history(
     if date:
         query = query.filter(Attendance.date == date)
 
-    return query.order_by(Attendance.timestamp.desc()).limit(100).all()
+    return query.order_by(Attendance.createdAt.desc()).limit(100).all()

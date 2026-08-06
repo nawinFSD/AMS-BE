@@ -3,11 +3,82 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 from app.database.connection import get_db
 from app.models.domain import User, Student, Faculty, Department, Course, UserRole
-from app.schemas.schemas import StudentResponse, FacultyResponse, UserCreate
-from app.utils.security import get_password_hash
+from app.schemas.schemas import StudentResponse, FacultyResponse, UserCreate, UserUpdate
+from app.utils.security import get_password_hash, verify_password
 from app.middleware.auth import get_current_user, require_role
+from pydantic import BaseModel
 
 router = APIRouter(prefix="/api/users", tags=["Users & Profiles"])
+
+class ChangePasswordPayload(BaseModel):
+    current_password: str
+    new_password: str
+
+@router.get("/me")
+def get_my_profile(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    profile = {"user": current_user}
+    if current_user.role == UserRole.STUDENT.value and current_user.student_profile:
+        profile["student"] = current_user.student_profile
+    if current_user.role == UserRole.FACULTY.value and current_user.faculty_profile:
+        profile["faculty"] = current_user.faculty_profile
+    return profile
+
+@router.put("/me")
+def update_my_profile(
+    payload: UserUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    update_data = payload.dict(exclude_unset=True)
+    if "email" in update_data and update_data["email"] != current_user.email:
+        existing = db.query(User).filter(User.email == update_data["email"]).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="Email already in use")
+    for key, value in update_data.items():
+        setattr(current_user, key, value)
+    db.commit()
+    db.refresh(current_user)
+    return current_user
+
+@router.post("/change-password")
+def change_password(
+    payload: ChangePasswordPayload,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if not verify_password(payload.current_password, current_user.hashed_password):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    if len(payload.new_password) < 6:
+        raise HTTPException(status_code=400, detail="New password must be at least 6 characters")
+    current_user.hashed_password = get_password_hash(payload.new_password)
+    db.commit()
+    return {"message": "Password updated successfully"}
+
+@router.put("/{user_id}")
+def update_user_by_admin(
+    user_id: int,
+    payload: UserUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role([UserRole.ADMIN.value]))
+):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    update_data = payload.dict(exclude_unset=True)
+    if "email" in update_data and update_data["email"] != user.email:
+        existing = db.query(User).filter(User.email == update_data["email"]).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="Email already in use")
+    if "password" in update_data and update_data["password"]:
+        update_data["hashed_password"] = get_password_hash(update_data.pop("password"))
+    for key, value in update_data.items():
+        setattr(user, key, value)
+    db.commit()
+    db.refresh(user)
+    return user
 
 @router.get("/students", response_model=List[StudentResponse])
 def get_all_students(
